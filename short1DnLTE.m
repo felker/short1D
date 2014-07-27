@@ -7,14 +7,14 @@
 %Parameters
 clear all;
 close all;
-nz = 1000;
+nz = 50000;
 ntheta = 2; %quadarture is only defined up to 12 in each direction, must be even
 %order of the quadrature, N, refers to the number of mu-levels in the interval [-1, 1].
 nf = 1; %number of frequencies 
 MAX_ITER = 10000; %Maximum ALI iterations
 delta_c = 1e-4; %Convergence criterion
 
-lz = 10.0;
+lz = 50.0;
 c = 1.0;
 dz = lz/nz;
 
@@ -55,9 +55,9 @@ thermal_source = B*temperatures;
 %destruction_prob = ones(nz,1);  
 
 %Davis12, highly scattering non-LTE atmosphere
-X_tot(:,1) = 50*exp(zz./lz); %exponentially thickening atmosphere
+X_tot(:,1) = 5*exp(zz./lz); %exponentially thickening atmosphere
 
-destruction_prob = 1e-2*ones(nz,1);  
+destruction_prob = 1*ones(nz,1);  
 
 %end test problems
 
@@ -86,8 +86,8 @@ for i=1:nf
         end
        inward_norm  = sc_interpolation(opt_depth(1,i)/abs(mu(j)), 0);
        outward_norm  = sc_interpolation(opt_depth(nz,i)/abs(mu(j)), 0); 
-       normalized_intensity(1,j,i) = inward_norm(2); %correct way to handle endpts?
-       normalized_intensity(nz,j,i) = outward_norm(2);
+       normalized_intensity(1,j,i) = inward_norm(2)/2; %correct way to handle endpts?
+       normalized_intensity(nz,j,i) = outward_norm(2)/2;
     end
 end
 %Outward going intensity bc, I^+ = I(lz,mu negative)
@@ -143,12 +143,12 @@ for i=1:nf
 end
 mean_intensity = sum(mean_intensity_f,2);
  %Update source function
- delta_source = 1./(1 - (1 - destruction_prob).*lambda_star).* ...
-     ((1- destruction_prob).*mean_intensity + destruction_prob.*thermal_source - source_function);
- source_function = source_function + delta_source;
+ delta_source = 1./(1 - (1 - destruction_prob(2:nz-1)).*lambda_star(2:nz-1)).* ...
+     ((1- destruction_prob(2:nz-1)).*mean_intensity(2:nz-1) + destruction_prob(2:nz-1).*thermal_source(2:nz-1) - source_function(2:nz-1));
+ source_function(2:nz-1) = source_function(2:nz-1) + delta_source;
  %Convergence check
  iter
- max_rel_change = max(abs(delta_source)./source_function)
+ max_rel_change = max(abs(delta_source)./source_function(2:nz-1))
  if max_rel_change <= delta_c
      break;
  end
@@ -158,12 +158,15 @@ end
 
 %Analytic solution for exponential scattering atmosphere
 for i=2:nz
+    %considering depth from z=0.0
     optical_depth(i) = sum(opt_depth(2:i,1),1);
 end
 optical_depth = optical_depth';
 analytic_J = thermal_source.*(1-(exp(-sqrt(3).*destruction_prob.*optical_depth))./(1+sqrt(destruction_prob)));
+analytic_source = (1-destruction_prob).*analytic_J + destruction_prob.*thermal_source; 
 analytic_error = abs(analytic_J - mean_intensity);
-loglog(optical_depth,source_function./thermal_source,optical_depth,analytic_J)
+loglog(optical_depth,source_function./thermal_source, ...
+    optical_depth,analytic_source./thermal_source);
 %almost matches solution for :
 %X_tot(:,1) = 50*exp(zz./lz); %exponentially thickening atmosphere
 %destruction_prob = 1e-2*ones(nz,1);  

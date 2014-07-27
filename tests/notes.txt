@@ -1,0 +1,44 @@
+Test #1: Comparison to Davis, et al 2012 figure 4. 
+Exponential thickening atmosphere with high non-LTE scattering
+-----------------------
+
+Code used: short1DnLTE.m, revision Fri Jul 25 20:45:00
+Manually hard-coded the two-stream approximation to get mu = [1, -1]
+
+Observations:
+Stability changes when increasing the range of X_tot-- the ALI iterations will level off in change and throw NaNs in intensity
+
+nz= 10,000 appears to be the limit for computaitonal feasibility in current serial MATLAB implementation
+
+Using the following parameters: 
+nz = 50000;
+ntheta = 2; 
+nf = 1; 
+MAX_ITER = 10000; 
+delta_c = 1e-4; 
+lz = 50.0;
+thermal_source = ones
+X_tot(:,1) = 5*exp(zz./lz); %exponentially thickening atmosphere
+destruction_prob = 1e-2*ones(nz,1);  
+
+I get a plot that more or less matches the shape of the analytic result.
+However, the entire functional shape is shifted to the left and there are definitive boundary issues as the mean_intensity drops to zero on the RHS
+
+Investigation reveals that the approximate ALI operator, lambda_star, suffers from a sharp discontinuity at the beginning of the domain
+
+Attempts at fixing:
+---------------------
+halved the normalized_intensity at the beginning and end of the array. No effect
+
+The obvious candidate is the inclusion of the boundary conditions, I^- and I^+ in the ALI
+However, restricting the updates of delta_source to 
+nonbndry points doesnt have an effect
+
+closer investigation reveals that the mean_intensity crashes near the RHS bndry (only to come back up to 1 for the last pt?) 
+
+Looking at the two-stream intensities shows that ther is a correct diminution of the intensity near the more opaque side, but it doesnt level off as in Davis12
+
+Take a step back to the LTE case--
+with destruction probability=1, we get correct convergence of each stream to the thermal source function, with the boundaries exponentially rising
+
+Does this just mean we need to go optically deeper?

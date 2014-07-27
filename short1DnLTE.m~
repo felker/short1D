@@ -7,20 +7,20 @@
 %Parameters
 clear all;
 close all;
-nz = 100;
-ntheta = 6; %quadarture is only defined up to 12 in each direction, must be even
+nz = 50000;
+ntheta = 2; %quadarture is only defined up to 12 in each direction, must be even
 %order of the quadrature, N, refers to the number of mu-levels in the interval [-1, 1].
 nf = 1; %number of frequencies 
 MAX_ITER = 10000; %Maximum ALI iterations
 delta_c = 1e-4; %Convergence criterion
 
-lz = 1.0;
+lz = 50.0;
 c = 1.0;
 dz = lz/nz;
 
 %Angular Discretization, Sn discrete ordinates. 
 [mu, w] = angular_quad1D(ntheta);
-
+mu = [1,-1]';
 %Spatial Discretization
 %Radiation points are centered on the fluid cells
 zz=linspace(0,lz,nz)';
@@ -45,18 +45,26 @@ B = 1e-3;
 thermal_source = B*temperatures;
 
 %Test Problems:
+%-------------
 %Coherent searchlight beam from LHS of domain
 %intensity(1,:,:) = 1;
 %X_tot = zeros(nz,nf); %this implies no blackbody emission or absorption
 
-%Uniform material, non-LTE
-X_tot = 1*ones(nz,nf);
-destruction_prob = 0.5*ones(nz,1);  
+%Uniform material, LTE
+%X_tot(:,:) = 1*ones(nz,nf);
+%destruction_prob = ones(nz,1);  
+
+%Davis12, highly scattering non-LTE atmosphere
+X_tot(:,1) = 5*exp(zz./lz); %exponentially thickening atmosphere
+
+destruction_prob = 1e-2*ones(nz,1);  
+
+%end test problems
 
 %Optical depth intervals using trapezoidal quadrature rule, X(i-1) + X(i)
 %Hayek10 computes the optical depth intervals using Bezier interp
 %Davis12 simply uses trapezoidal rule
-opt_depth = dz*(circshift(X_tot,+1) + X_tot)/2;
+opt_depth = dz*(circshift(X_tot,+1) + X_tot)/2; %1st point is garbage
 %Interpolation coefficients
 interp_coeff = zeros(3,1);
 
@@ -67,19 +75,30 @@ interp_coeff = zeros(3,1);
 %For linear interpolation, this is a simple formula
 normalized_intensity = zeros(nz,ntheta,nf);
 for i=1:nf
-    for j=1:ntheta
+    for j=1:ntheta/2 %these formulas should be dependent on the sign of mu...
         for k=2:nz-1
+            %perhaps because they only depend on the abs value of mu
+            %we can ignore the direction, do half of them, assuming
+            %symmetry of discretization
             outward_norm = sc_interpolation(opt_depth(k,i)/abs(mu(j)), 0); 
             inward_norm  = sc_interpolation(opt_depth(k+1,i)/abs(mu(j)), 0); 
             normalized_intensity(k,j,i) = 0.5*(outward_norm(2) + inward_norm(2));
         end
+       inward_norm  = sc_interpolation(opt_depth(1,i)/abs(mu(j)), 0);
+       outward_norm  = sc_interpolation(opt_depth(nz,i)/abs(mu(j)), 0); 
+       normalized_intensity(1,j,i) = inward_norm(2); %correct way to handle endpts?
+       normalized_intensity(nz,j,i) = outward_norm(2);
     end
 end
+%Outward going intensity bc, I^+ = I(lz,mu negative)
+%Inward going intensity bc, I^- = I(0,mu positive)
+%I(0, mu neg... and I(lz, mu positive are free parameters
+
 %integrate over frequnecy and mu
 lambda_star = zeros(nz,1);
 %frequency weights??
 w_f = 1/nf*ones(nf,1);
-return;
+
 for i=1:nz
     %should only integrate half the angles?
     lambda_star(i) = (w(1:ntheta/2)'*squeeze(normalized_intensity(i,1:ntheta/2,:)))*w_f;
@@ -87,50 +106,85 @@ end
 
 %Initial guess of source function for iterative scheme
 source_function = thermal_source; 
-for l=1:MAX_ITER
+for iter=1:MAX_ITER
 for i=1:nf 
     for j=1:ntheta
         if mu(j) >=0
             first = 2;
-            last = nz-1;
-            upwind = -1;
+            last = nz;
+            upwind = -1; %points to upwind meshpoint
             downwind = 1;
+            depth_dir = 0; %points to correct opt_depth interval index
         else
             first = nz-1;
-            last = 2;
+            last = 1;
+            depth_dir = 1;
             upwind = 1;
             downwind = -1;
         end
         for k=first:downwind:last %trace characteristics downwind
             %Calculate interpolation coefficients
             %Possible schemes: linear, parabolic, Bezier with control points
-            interp_coeff = sc_interpolation(opt_depth(k,i)/abs(mu(j)),opt_depth(k+downwind,i)/abs(mu(j)));
-            %Update
-            intensity(k,j,i) = intensity(k+upwind,j)*exp(-opt_depth(k,i)/abs(mu(j))) + interp_coeff(1)*source_function(k+upwind) + ...
-            +interp_coeff(2)*source_function(k) + interp_coeff(3)*source_function(k+downwind);
+            interp_coeff = sc_interpolation(opt_depth(k+depth_dir,i)/abs(mu(j)),opt_depth(k,i)/abs(mu(j)));
+            %Update %line above must be fixed for downwind (and below) for
+            %parabolic
+            intensity(k,j,i) = intensity(k+upwind,j)*exp(-opt_depth(k+depth_dir,i)/abs(mu(j))) + interp_coeff(1)*source_function(k+upwind) + ...
+            +interp_coeff(2)*source_function(k) + interp_coeff(3)*source_function(k);
         end
     end
 end
 %Calculate source function
 %Frequency independent for two-level atom (not true... see davis)
 %Integrate I for monocrhomatic mean intensity, J_v using quadrature rule
-mean_intensity_f = 1/2*sum(weights*ones(1,ntheta)*intensity);
+for i=1:nf
+    for j=1:nz
+        mean_intensity_f(j,i) = 1/2*squeeze(intensity(j,:,i))*w;
+    end
+end
+mean_intensity = sum(mean_intensity_f,2);
  %Update source function
- delta_source = 1/(1 - (1 - destruction_prob).*lambda_star).* ...
+ delta_source = 1./(1 - (1 - destruction_prob).*lambda_star).* ...
      ((1- destruction_prob).*mean_intensity + destruction_prob.*thermal_source - source_function);
  source_function = source_function + delta_source;
  %Convergence check
- if max(abs(delta_source)./source_function) <= delta_c
+ iter
+ max_rel_change = max(abs(delta_source)./source_function)
+ if max_rel_change <= delta_c
      break;
  end
 end
+
 %Output
-%Plot each angular intensity (recall, ntheta must be even)
-for i=1:ntheta
-    hi = subplot(4,3,i); 
-    plot(hi,zz(2:nz-1),intensity(2:nz-1,i,1));
-    x_label = sprintf('mu = %f',mu(i));
-    xlabel(x_label);
+
+%Analytic solution for exponential scattering atmosphere
+for i=2:nz
+    %considering depth from z=0.0
+    optical_depth(i) = sum(opt_depth(2:i,1),1);
 end
-    h = figure;
-    quiver(zeros(ntheta,1),zeros(ntheta,1),mu,sqrt(ones(ntheta,1) - mu.^2)); 
+optical_depth = optical_depth';
+analytic_J = thermal_source.*(1-(exp(-sqrt(3).*destruction_prob.*optical_depth))./(1+sqrt(destruction_prob)));
+analytic_source = (1-destruction_prob).*analytic_J + destruction_prob.*thermal_source; 
+analytic_error = abs(analytic_J - mean_intensity);
+loglog(optical_depth,source_function./thermal_source, ...
+    optical_depth,analytic_source./thermal_source);
+%almost matches solution for :
+%X_tot(:,1) = 50*exp(zz./lz); %exponentially thickening atmosphere
+%destruction_prob = 1e-2*ones(nz,1);  
+
+
+%plot(zz,analytic_error); 
+%h = figure;
+%loglog(optical_depth,source_function./thermal_source); %Davis12 Fig 4.
+%h2 = figure;
+%plot(zz,destruction_prob.*thermal_source,zz,mean_intensity);
+%legend('thermal source function','mean intensity');
+
+%Plot each angular intensity (recall, ntheta must be even)
+%for i=1:ntheta
+%    hi = subplot(2,1,i); 
+%    plot(hi,zz,intensity(:,i,1));
+%    x_label = sprintf('mu = %f',mu(i));
+%    xlabel(x_label);
+%end
+%h = figure;
+%quiver(zeros(ntheta,1),zeros(ntheta,1),mu,sqrt(ones(ntheta,1) - mu.^2)); 
