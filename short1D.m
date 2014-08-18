@@ -8,7 +8,7 @@
 clear all;
 close all;
 nz = 100;
-ntheta = 12; %quadarture is only defined up to 12 in each direction, must be even
+ntheta = 2; %quadarture is only defined up to 12 in each direction, must be even
 %order of the quadrature, N, refers to the number of mu-levels in the interval [-1, 1].
 
 lz = 1.0;

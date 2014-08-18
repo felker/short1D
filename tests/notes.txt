@@ -8,6 +8,8 @@ Manually hard-coded the two-stream approximation to get mu = [1, -1]
 Observations:
 Stability changes when increasing the range of X_tot-- the ALI iterations will level off in change and throw NaNs in intensity
 
+I think this only happens when the gradient X_tot becomes too large
+
 nz= 10,000 appears to be the limit for computaitonal feasibility in current serial MATLAB implementation
 
 Using the following parameters: 
@@ -34,11 +36,33 @@ The obvious candidate is the inclusion of the boundary conditions, I^- and I^+ i
 However, restricting the updates of delta_source to 
 nonbndry points doesnt have an effect
 
-closer investigation reveals that the mean_intensity crashes near the RHS bndry (only to come back up to 1 for the last pt?) 
+closer investigation reveals that the mean_intensity crashes near the RHS bndry (only to come back up to 1 for the last pt?-- this was due to me cutting the bndry points off) 
 
 Looking at the two-stream intensities shows that ther is a correct diminution of the intensity near the more opaque side, but it doesnt level off as in Davis12
 
 Take a step back to the LTE case--
 with destruction probability=1, we get correct convergence of each stream to the thermal source function, with the boundaries exponentially rising
 
-Does this just mean we need to go optically deeper?
+Does this just mean we need to go optically deeper to ignore scattering effects at the bndry?
+Currently, we are going 5e3 deep
+--Ans: nope, going deeper still preserves about 3 cells that drop near the boundary
+
+Going deeper reduces the drop in the source function somewhat. I need a logarithmic/nonuniform spatial discretization in order to capture the entire range effectively, as in Davisi12
+
+Update, 8/7
+------------
+After meeting with Prof. Stone, I realized that im handling the boundary conditions incorrectly. Specifically, it should be a semi-infintie atmosphere.
+Does that mean that the RHS source_function bndry should be equal to thermal source?
+
+
+Investigation of the solution after one iteration shows that the lambda_star operator is mixing in the fixed boundary conditions to pollute the solution at the RHS boundary. 
+
+normalized_intensity(1,...), normalized_intensity(nz,...) are anomolous, as to be expected
+
+Even with the restriction of the lambda_star updates to exclude the boundary, we still get the delta_source largest near the RHS boundary. 
+
+WHAT ARE THE OPTICAL DEPTHS AT THE BOUNDARY CONDITIONS??
+
+The RHS is fixed when you use the BC from infinity, that is, intensity ---> thermal source
+
+For now, the mismatach from the LHS will be allowed and written off as a product of the insufficient spatial resolution to optical depth 10-4

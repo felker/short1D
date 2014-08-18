@@ -1,26 +1,34 @@
-%1D short characteristics solver for RT
-% This is for non-LTE problems using ALI
+%1D short characteristics solver for RT 
 % Multiple frequencies
 %Time independent problem
-%Main ref: Hubeny 2003
+
+%Relativistic version, exact mixed-frame equations
+% only LTE right now
 
 %Parameters
 clear all;
 close all;
-nz = 50000;
-ntheta = 2; %quadarture is only defined up to 12 in each direction, must be even
+nz = 1000;
+ntheta = 6; %quadarture is only defined up to 12 in each direction, must be even
 %order of the quadrature, N, refers to the number of mu-levels in the interval [-1, 1].
-nf = 1; %number of frequencies 
-MAX_ITER = 10000; %Maximum ALI iterations
+nf = 100; %number of frequencies 5
+%MAX_ITER = 10000; %Maximum ALI iterations
 delta_c = 1e-4; %Convergence criterion
 
-lz = 50.0;
+lz = 1.0;
 c = 1.0;
 dz = lz/nz;
 
+%Fixed background fluid properties
+fluid_velocity = zeros(nz,1);
+
+%Distribute frequencies logarithmically from 10^-4 to 10^0
+freq = logspace(-4,0,nf)';
+% Frequency weights?? 
+w_f = 1/nf*ones(nf,1);
+
 %Angular Discretization, Sn discrete ordinates. 
 [mu, w] = angular_quad1D(ntheta);
-mu = [1,-1]';
 %Spatial Discretization
 %Radiation points are centered on the fluid cells
 zz=linspace(0,lz,nz)';
@@ -46,18 +54,20 @@ thermal_source = B*temperatures;
 
 %Test Problems:
 %-------------
-%Coherent searchlight beam from LHS of domain
-%intensity(1,:,:) = 1;
-%X_tot = zeros(nz,nf); %this implies no blackbody emission or absorption
+%Uniform material, LTE. 
+%This is measured in the comoving frame
+X_tot(:,:) = 1*ones(nz,nf);
+destruction_prob = ones(nz,1);  
 
-%Uniform material, LTE
-%X_tot(:,:) = 1*ones(nz,nf);
-%destruction_prob = ones(nz,1);  
-
-%Davis12, highly scattering non-LTE atmosphere
-X_tot(:,1) = 100*exp(zz./lz); %exponentially thickening atmosphere
-
-destruction_prob = 1e-2*ones(nz,1);  
+%Relativistic information
+fluid_velocity = 0.75.*c.*ones(nz,1); %z component of velocity
+lorentz_factor = 1./sqrt(1- fluid_velocity.^2./c^2); 
+%Calculate local Doppler shift at each angle
+for i=1:ntheta
+    for j=1:nz
+    doppler_shift(i,j) = lorentz_factor(j)*(1- mu(i)*fluid_velocity(j)/c); 
+    end
+end
 %end test problems
 
 %Optical depth intervals using trapezoidal quadrature rule, X(i-1) + X(i)
@@ -72,41 +82,41 @@ interp_coeff = zeros(3,1);
 %formal solution, diagonal elements only (we are only taking the i-th index 
 %for each i formal solution). Could do tridiagonal, etc
 %For linear interpolation, this is a simple formula
-normalized_intensity = zeros(nz,ntheta,nf);
-for i=1:nf
-    for j=1:ntheta/2 %these formulas should be dependent on the sign of mu...
-        for k=2:nz-1
-            %perhaps because they only depend on the abs value of mu
-            %we can ignore the direction, do half of them, assuming
-            %symmetry of discretization
-            outward_norm = sc_interpolation(opt_depth(k,i)/abs(mu(j)), 0); 
-            inward_norm  = sc_interpolation(opt_depth(k+1,i)/abs(mu(j)), 0); 
-            normalized_intensity(k,j,i) = 0.5*(outward_norm(2) + inward_norm(2));
-        end
-       inward_norm  = sc_interpolation(opt_depth(2,i)/abs(mu(j)), 0); 
-       outward_norm  = sc_interpolation(opt_depth(nz,i)/abs(mu(j)), 0); 
-       normalized_intensity(1,j,i) = inward_norm(2); %correct way to handle endpts?
-       normalized_intensity(nz,j,i) = outward_norm(2);
-    end
-end
-%Outward going intensity bc, I^+ = I(lz,mu negative)
-%Inward going intensity bc, I^- = I(0,mu positive)
-%I(0, mu neg... and I(lz, mu positive are free parameters
+% normalized_intensity = zeros(nz,ntheta,nf);
+% for i=1:nf
+%     for j=1:ntheta/2 %these formulas should be dependent on the sign of mu...
+%         for k=2:nz-1
+%             %perhaps because they only depend on the abs value of mu
+%             %we can ignore the direction, do half of them, assuming
+%             %symmetry of discretization
+%             outward_norm = sc_interpolation(opt_depth(k,i)/abs(mu(j)), 0); 
+%             inward_norm  = sc_interpolation(opt_depth(k+1,i)/abs(mu(j)), 0); 
+%             normalized_intensity(k,j,i) = 0.5*(outward_norm(2) + inward_norm(2));
+%         end
+%        inward_norm  = sc_interpolation(opt_depth(1,i)/abs(mu(j)), 0);
+%        outward_norm  = sc_interpolation(opt_depth(nz,i)/abs(mu(j)), 0); 
+%        normalized_intensity(1,j,i) = inward_norm(2)/2; %correct way to handle endpts?
+%        normalized_intensity(nz,j,i) = outward_norm(2)/2;
+%     end
+% end
+% %Outward going intensity bc, I^+ = I(lz,mu negative)
+% %Inward going intensity bc, I^- = I(0,mu positive)
+% %I(0, mu neg... and I(lz, mu positive are free parameters
+% 
+% %integrate over frequnecy and mu
+% lambda_star = zeros(nz,1);
 
-%integrate over frequnecy and mu
-lambda_star = zeros(nz,1);
-%frequency weights??
-w_f = 1/nf*ones(nf,1);
-
-for i=1:nz
-    %should only integrate half the angles?
-    lambda_star(i) = (w(1:ntheta/2)'*squeeze(normalized_intensity(i,1:ntheta/2,:)))*w_f;
-end
+% 
+% for i=1:nz
+%     %should only integrate half the angles?
+%     lambda_star(i) = (w(1:ntheta/2)'*squeeze(normalized_intensity(i,1:ntheta/2,:)))*w_f;
+% end
 
 %Initial guess of source function for iterative scheme
-source_function = thermal_source; 
-for iter=1:MAX_ITER
+%source_function = thermal_source; 
+%for iter=1:MAX_ITER
 for i=1:nf 
+    %Calculate frequency shift for opacity function
     for j=1:ntheta
         if mu(j) >=0
             first = 2;
@@ -120,21 +130,21 @@ for i=1:nf
             depth_dir = 1;
             upwind = 1;
             downwind = -1;
-            %Boundary condition from infinity
-            intensity(nz,j,i) = thermal_source(nz);
         end
         for k=first:downwind:last %trace characteristics downwind
+            %Calculate change in frequency bin
+            nu = freq(i)
+            nu_shifted = freq(i)*doppler_shift(j,k)
             %Calculate interpolation coefficients
             %Possible schemes: linear, parabolic, Bezier with control points
-            interp_coeff = sc_interpolation(opt_depth(k+depth_dir,i)/abs(mu(j)),opt_depth(k,i)/abs(mu(j)));
+            %interp_coeff = sc_interpolation(opt_depth(k+depth_dir,i)/abs(mu(j)),opt_depth(k,i)/abs(mu(j)));
             %Update %line above must be fixed for downwind (and below) for
             %parabolic
-            intensity(k,j,i) = intensity(k+upwind,j)*exp(-opt_depth(k+depth_dir,i)/abs(mu(j))) + interp_coeff(1)*source_function(k+upwind) + ...
-            +interp_coeff(2)*source_function(k) + interp_coeff(3)*source_function(k);
+            %intensity(k,j,i) = intensity(k+upwind,j)*exp(-opt_depth(k+depth_dir,i)/abs(mu(j))) + interp_coeff(1)*source_function(k+upwind) + ...
+            %+interp_coeff(2)*source_function(k) + interp_coeff(3)*source_function(k);
         end
     end
-end
-
+%end
 %Calculate source function
 %Frequency independent for two-level atom (not true... see davis)
 %Integrate I for monocrhomatic mean intensity, J_v using quadrature rule
@@ -145,15 +155,11 @@ for i=1:nf
 end
 mean_intensity = sum(mean_intensity_f,2);
  %Update source function
- %Excluding endpoints
- %delta_source = 1./(1 - (1 - destruction_prob(2:nz-1)).*lambda_star(2:nz-1)).* ...
-  %((1- destruction_prob(2:nz-1)).*mean_intensity(2:nz-1) + ...
-  %destruction_prob(2:nz-1).*thermal_source(2:nz-1) - source_function(2:nz-1));
- %source_function(2:nz-1) = source_function(2:nz-1) + delta_source;
-
-%Including endpoints 
-delta_source = 1./(1 - (1 - destruction_prob).*lambda_star).* ...
+% delta_source = 1./(1 - (1 - destruction_prob(2:nz-1)).*lambda_star(2:nz-1)).* ...
+ %    ((1- destruction_prob(2:nz-1)).*mean_intensity(2:nz-1) + destruction_prob(2:nz-1).*thermal_source(2:nz-1) - source_function(2:nz-1));
+ delta_source = 1./(1 - (1 - destruction_prob).*lambda_star).* ...
      ((1- destruction_prob).*mean_intensity + destruction_prob.*thermal_source - source_function);
+ %source_function(2:nz-1) = source_function(2:nz-1) + delta_source;
  source_function = source_function + delta_source;
  %Convergence check
  iter
@@ -180,6 +186,7 @@ loglog(optical_depth,source_function./thermal_source, ...
 %almost matches solution for :
 %X_tot(:,1) = 50*exp(zz./lz); %exponentially thickening atmosphere
 %destruction_prob = 1e-2*ones(nz,1);  
+
 
 %plot(zz,analytic_error); 
 %h = figure;
